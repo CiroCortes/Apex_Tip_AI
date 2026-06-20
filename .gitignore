@@ -1,0 +1,22 @@
+# Entornos Virtuales
+venv/
+env/
+.env/
+__pycache__/
+*.pyc
+
+# Variables de Entorno y Credenciales
+.env
+.env.*
+! .env.example
+*.json
+! package.json
+# (Si usas un nombre específico para las credenciales de Firebase, ignóralo aquí)
+firebase-credentials.json
+firebase-adminsdk.json
+
+# IDE y Sistema
+.vscode/
+.idea/
+.DS_Store
+*.log
