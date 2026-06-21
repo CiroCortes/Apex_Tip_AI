@@ -18,12 +18,27 @@ def get_firebase_app():
             firebase_admin.initialize_app()
         _firebase_initialized = True
 
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Security(security)) -> dict:
     """
     Middleware/Dependency para validar JWT tokens de Firebase y extraer el UID.
     """
+    # BYPASS PARA DESARROLLO LOCAL: Si no mandas token en dev, te damos un usuario de prueba
+    if not credentials and settings.ENVIRONMENT == "development":
+        return {
+            "uid": "dev-mock-user-123",
+            "email": "dev@apextip.ai",
+            "roles": {"role": "tipster", "subscription": "premium"}
+        }
+        
+    if not credentials:
+        raise HTTPException(
+            status_code=401,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     get_firebase_app()
     token = credentials.credentials
     try:

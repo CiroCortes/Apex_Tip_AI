@@ -7,3 +7,4 @@ supabase>=2.3.0
 google-genai>=0.5.0
 fastapi-mcp>=0.1.0
 openai>=1.12.0 # Client for DeepSeek (OpenAI compatible API)
+httpx>=0.27.0 # Para llamadas asíncronas a API-Football
