@@ -28,6 +28,31 @@ async def get_ai_predictions(
         end_date = f"{date}T23:59:59Z"
         
         response = db.table("ai_predictions").select("*").gte("event_date", start_date).lte("event_date", end_date).execute()
-        return response.data
+        data = response.data
+        
+        # Calcular Resumen de Unidades
+        summary = {
+            "total_tips": len(data),
+            "won": 0,
+            "lost": 0,
+            "void": 0,
+            "pending": 0,
+            "total_units_profit": 0.0
+        }
+        
+        for p in data:
+            st = p.get("status")
+            if st in summary:
+                summary[st] += 1
+            if p.get("pnl") is not None:
+                summary["total_units_profit"] += float(p["pnl"])
+                
+        # Redondear profit a 2 decimales
+        summary["total_units_profit"] = round(summary["total_units_profit"], 2)
+                
+        return {
+            "summary": summary,
+            "predictions": data
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

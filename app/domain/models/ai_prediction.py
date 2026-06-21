@@ -5,6 +5,7 @@ class SportEnum(str, Enum):
     football = "football"
 
 class PredictionStatusEnum(str, Enum):
+    unconfirmed = "unconfirmed"
     pending = "pending"
     won = "won"
     lost = "lost"
@@ -31,6 +32,7 @@ class MatchDataPayload(BaseModel):
     home_team: str
     away_team: str
     current_odds: dict
+    is_top_match: bool = Field(False, description="Si es True, prioriza mercados seguros. Si es False, busca valor > 1.50")
     
     # HORIZONTES TEMPORALES
     apex_velocity_data: dict = Field(..., description="Data de los últimos 30 días")
@@ -42,17 +44,27 @@ class AIPredictionResult(BaseModel):
     fixture_id: str = Field(..., description="ID del evento deportivo analizado")
     apex_velocity_home: int = Field(..., description="Fuerza del equipo local calculada de 1 a 100", ge=1, le=100)
     apex_velocity_away: int = Field(..., description="Fuerza del equipo visitante calculada de 1 a 100", ge=1, le=100)
-    selected_market: str = Field(..., description="Mercado óptimo elegido (ej. 'Corners', '1X', 'Over'). Solo 1 mercado.")
-    recommended_quota: float = Field(..., description="Cuota mínima recomendada (debe ser > 1.50 para valor matemático)", ge=1.5)
-    stars_confidence: int = Field(..., description="Nivel de confianza de 1 a 5 estrellas", ge=1, le=5)
-    ai_justification: str = Field(..., description="Análisis masticado justificando la decisión y el filtro anti-trampa")
+    strategy: str = Field(..., description="Categoría estratégica elegida: 'home_away', 'overs', 'corners', 'btts', 'underdog_dc'")
+    selected_market: str = Field(..., description="Mercado óptimo elegido. Solo 1 mercado.")
+    recommended_quota: float = Field(..., description="Cuota mínima recomendada")
+    main_pick_confidence: int = Field(..., description="Porcentaje de confianza del pick principal elegido (1-100)", ge=1, le=100)
+    confidence_winner: int = Field(..., description="Porcentaje de confianza para que alguien gane el partido (1-100)", ge=1, le=100)
+    confidence_over: int = Field(..., description="Porcentaje de confianza para que haya Over de goles (1-100)", ge=1, le=100)
+    confidence_corners: int = Field(..., description="Porcentaje de confianza para que haya un buen número de Corners (1-100)", ge=1, le=100)
+    confidence_btts: int = Field(..., description="Porcentaje de confianza para que Ambos Anoten (1-100)", ge=1, le=100)
+    ai_justification: str = Field(..., description="Análisis exhaustivo, nombrando a ApexTip AI y Apex Velocity")
 
 class AIPredictionRecord(AIPredictionResult):
     id: str # UUID en base de datos
     sport: SportEnum = SportEnum.football
+    league_name: str
     event_name: str
     event_date: str
-    status: PredictionStatusEnum = PredictionStatusEnum.pending
+    stake: float = 1.0
+    tier: str = "premium"
+    is_top_match: bool = False
+    status: PredictionStatusEnum = PredictionStatusEnum.unconfirmed
+    pnl: float | None = None
     
     class Config:
         from_attributes = True

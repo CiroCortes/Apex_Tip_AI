@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi_mcp import FastApiMCP
 from app.core.config import settings
 
-from app.api.v1.endpoints import community, ai_analytics, scheduler
+from app.api.v1.endpoints import community, ai_analytics, scheduler, recap
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -24,6 +24,7 @@ app.add_middleware(
 app.include_router(community.router, prefix="/api/v1/community", tags=["Comunidad & Tipsters"])
 app.include_router(ai_analytics.router, prefix="/api/v1/ai", tags=["Analista Inteligencia Artificial"])
 app.include_router(scheduler.router, prefix="/api/v1/cron", tags=["Motor de Recolección (Cron)"])
+app.include_router(recap.router, prefix="/api/v1/cron", tags=["Recapitulador de Resultados"])
 
 # Inicialización de MCP sobre FastAPI
 # fastapi-mcp automáticamente convierte las rutas de FastAPI en herramientas MCP

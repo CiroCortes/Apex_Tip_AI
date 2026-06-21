@@ -53,20 +53,34 @@ CREATE TABLE IF NOT EXISTS ai_predictions (
     fixture_id VARCHAR(50) NOT NULL UNIQUE,
     sport VARCHAR(30) NOT NULL,
     event_name VARCHAR(150) NOT NULL, -- Ej: Real Madrid vs Barcelona
+    league_name VARCHAR(255) DEFAULT 'Unknown',
     event_date TIMESTAMP WITH TIME ZONE NOT NULL,
     
     -- Métricas del Sistema ApexTip AI
     apex_velocity_home INT NOT NULL, -- Fuerza local (1-100)
     apex_velocity_away INT NOT NULL, -- Fuerza visitante (1-100)
     
-    -- El Pick Masticado por Gemini
-    selected_market VARCHAR(100) NOT NULL, -- Ej: "Corners - Más de 9.5" o "Doble Oportunidad 1X"
-    recommended_quota NUMERIC(6,2) NOT NULL, -- Ej: 1.75 (Siempre > 1.50)
-    stars_confidence INT NOT NULL CHECK (stars_confidence BETWEEN 1 AND 5), -- Sistema de estrellas (1-5)
+    -- El Pick Masticado por Gemini (ApexTip AI)
+    strategy VARCHAR(50) NOT NULL,
+    selected_market VARCHAR(100) NOT NULL,
+    recommended_quota NUMERIC(6,2) NOT NULL,
+    stake NUMERIC(5,2) DEFAULT 1.0,
+    main_pick_confidence INT NOT NULL CHECK (main_pick_confidence BETWEEN 1 AND 100),
+    confidence_winner INT NOT NULL CHECK (confidence_winner BETWEEN 1 AND 100),
+    confidence_over INT NOT NULL CHECK (confidence_over BETWEEN 1 AND 100),
+    confidence_corners INT NOT NULL CHECK (confidence_corners BETWEEN 1 AND 100),
+    confidence_btts INT NOT NULL CHECK (confidence_btts BETWEEN 1 AND 100),
     ai_justification TEXT NOT NULL, -- Análisis digerido para el usuario
     
-    -- Control de Estado del Partido
-    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'live', 'settled_won', 'settled_lost')), 
+    -- Control de Acceso y Origen
+    tier VARCHAR(20) DEFAULT 'premium',
+    is_top_match BOOLEAN DEFAULT FALSE,
+    
+    -- Control de Estado (Lifecycle)
+    status VARCHAR(20) DEFAULT 'unconfirmed' CHECK (status IN ('unconfirmed', 'pending', 'won', 'lost', 'void')), 
+    pnl NUMERIC(10,2) DEFAULT NULL,
+    
+    -- Metadatos
     created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
 

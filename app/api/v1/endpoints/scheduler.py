@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 import os
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from app.services.gemini_service import gemini_service
 from app.domain.models.ai_prediction import MatchDataPayload, H2HHistory
 from app.services.supabase_client import get_supabase_client
@@ -16,104 +16,192 @@ SPORTS_API_URL_FIXTURES = "https://v3.football.api-sports.io/fixtures"
 from app.core.config import settings
 
 @router.post("/scan-value-bets")
-async def scan_and_predict_pre_match(date: str, db: Client = Depends(get_supabase_client)):
+async def scan_and_predict_pre_match(date: str = None, db: Client = Depends(get_supabase_client)):
     """
-    Filtra los partidos del día con cuotas > 1.5 y genera predicciones con IA de forma masiva
-    para guardarlas en Supabase antes de que los usuarios abran la app.
+    Escanea partidos usando una ventana deslizante de 6 días (si no se envía fecha).
+    Filtra los que ya están en base de datos para no gastar IA.
     """
+    if date:
+        dates_to_scan = [date]
+    else:
+        dates_to_scan = [(datetime.utcnow() + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(6)]
+
     api_key = settings.API_FOOTBALL_KEY
     if not api_key:
-        raise HTTPException(status_code=500, detail="API_FOOTBALL_KEY no configurada en el .env")
-
-    headers = {"x-apisports-key": api_key}
-    
-    # 1. Traer TODOS los nombres de los equipos de ese día (1 sola llamada a la API)
-    fixtures_response = requests.get(SPORTS_API_URL_FIXTURES, headers=headers, params={"date": date})
-    fixtures_data = fixtures_response.json().get("response", [])
-    
-    # Creamos un diccionario en memoria para buscar rápido: { "1493548": {"home": "Real Madrid", "away": "Barcelona"} }
-    team_names_map = {}
-    for f in fixtures_data:
-        f_id = str(f["fixture"]["id"])
-        team_names_map[f_id] = {
-            "home": f["teams"]["home"]["name"],
-            "away": f["teams"]["away"]["name"]
-        }
-
-    # 2. Traer TODAS las cuotas de ese día (1 sola llamada a la API)
-    params_odds = {"date": date, "bookmaker": "1"} # 1 suele ser 10Bet o bet365
-    odds_response = requests.get(SPORTS_API_URL_ODDS, headers=headers, params=params_odds)
-    
-    if odds_response.status_code != 200:
-        return {"error": f"No se pudieron obtener las cuotas externas: {odds_response.text}"}
+        raise HTTPException(status_code=500, detail="API_FOOTBALL_KEY no configurada")
         
-    odds_data = odds_response.json().get("response", [])
+    headers = {
+        "x-rapidapi-key": api_key,
+        "x-rapidapi-host": "v3.football.api-sports.io"
+    }
+
+    # Obtener fixtures ya analizados para ignorarlos
+    try:
+        existing = db.table("ai_predictions").select("fixture_id").execute()
+        existing_ids = {str(r["fixture_id"]) for r in existing.data}
+    except:
+        existing_ids = set()
+
     oportunidades = []
 
-    print(f"✅ Se encontraron {len(odds_data)} partidos con cuotas para el {date}. Iniciando Filtro de Inversión ZCode...")
-    
-    for item in odds_data:
-        fixture_id = str(item["fixture"]["id"])
+    for scan_date in dates_to_scan:
+        print(f"🔍 Escaneando fecha: {scan_date}...")
         
-        if not item.get("bookmakers"):
+        # 1. Traer fixtures para obtener nombres y estados
+        fixtures_response = requests.get(SPORTS_API_URL_FIXTURES, headers=headers, params={"date": scan_date})
+        if fixtures_response.status_code != 200:
             continue
             
-        bookmaker = item["bookmakers"][0]
-        bets = bookmaker["bets"][0] 
-        
-        # Encontrar si al menos una cuota vale la pena
-        has_value_bet = any(1.5 <= float(v["odd"]) <= 3.0 for v in bets["values"])
-        
-        if has_value_bet:
-            # Buscar los nombres reales en nuestro diccionario en memoria
-            team_info = team_names_map.get(fixture_id, {"home": "Equipo Local", "away": "Equipo Visitante"})
-            home_team_name = team_info["home"]
-            away_team_name = team_info["away"]
+        fixtures_data = fixtures_response.json().get("response", [])
+        if not fixtures_data:
+            continue
             
-            print(f"⏳ Analizando partido {fixture_id} ({home_team_name} vs {away_team_name}) con IA...")
-            
-            # Empaquetamos todas las cuotas disponibles para que la IA decida la mejor
-            all_odds = {v["value"]: float(v["odd"]) for v in bets["values"]}
-            
-            # Data estructurada con nombres reales
-            payload = MatchDataPayload(
-                fixture_id=fixture_id,
-                match_date=date,
-                home_team=home_team_name, 
-                away_team=away_team_name,
-                current_odds={"market": bets['name'], "available_odds": all_odds},
-                apex_velocity_data={"xg_ratio": 1.5, "win_streak": 3, "key_injuries": 0},
-                context_one_year_data={"avg_goals": 2.5, "home_win_rate": 0.6},
-                h2h_historic_four_years=[]
-            )
-            
-            try:
-                prediction = await gemini_service.analyze_match(payload)
-                
-                db_record = {
-                    "fixture_id": fixture_id,
-                    "sport": "football",
-                    "event_name": f"{home_team_name} vs {away_team_name}",
-                    "event_date": f"{date}T00:00:00Z",
-                    "apex_velocity_home": prediction.apex_velocity_home,
-                    "apex_velocity_away": prediction.apex_velocity_away,
-                    "selected_market": prediction.selected_market,
-                    "recommended_quota": prediction.recommended_quota,
-                    "stars_confidence": prediction.stars_confidence,
-                    "ai_justification": prediction.ai_justification,
-                    "status": "pending"
-                }
-                
-                # Usamos upsert especificando que el conflicto es en fixture_id
-                db.table("ai_predictions").upsert(db_record, on_conflict="fixture_id").execute()
-                oportunidades.append(db_record)
-                
-                print(f"⭐ ¡Predicción guardada! Mercado: {prediction.selected_market} | Cuota: {prediction.recommended_quota}")
-                
-                # Respetar Rate Limit de Gemini (Aumentado a 8 segundos para evitar límite de la capa gratuita)
-                await asyncio.sleep(8)
-            except Exception as e:
-                print(f"❌ Error procesando {fixture_id}: {e}")
+        team_names_map = {}
+        for f in fixtures_data:
+            team_names_map[str(f["fixture"]["id"])] = {
+                "home": f["teams"]["home"]["name"],
+                "away": f["teams"]["away"]["name"],
+                "league": f["league"]["name"],
+                "league_id": f["league"]["id"],
+                "status": f["fixture"]["status"]["short"]
+            }
 
-    print(f"🎉 Proceso Cron Terminado. Total de Value Bets guardadas: {len(oportunidades)}")
+        # 2. Traer cuotas
+        odds_data = []
+        current_page = 1
+        total_pages = 1
+        
+        while current_page <= total_pages:
+            odds_response = requests.get(SPORTS_API_URL_ODDS, headers=headers, params={"date": scan_date, "bookmaker": "1", "page": current_page})
+            if odds_response.status_code != 200:
+                break
+            json_resp = odds_response.json()
+            odds_data.extend(json_resp.get("response", []))
+            total_pages = json_resp.get("paging", {}).get("total", 1)
+            current_page += 1
+            
+        print(f"✅ Cuotas de {len(odds_data)} partidos para {scan_date}.")
+        
+        for item in odds_data:
+            fixture_id = str(item["fixture"]["id"])
+            
+            # Si ya lo analizamos antes, lo saltamos
+            if fixture_id in existing_ids:
+                continue
+                
+            if not item.get("bookmakers"):
+                continue
+                
+            bookmaker = item["bookmakers"][0]
+            team_info = team_names_map.get(fixture_id, {"home": "Local", "away": "Visitante", "league": "Unknown", "league_id": 0, "status": "Unknown"})
+            
+            # Solo predecir si NO han comenzado
+            if team_info["status"] != "NS":
+                continue
+                
+            is_top_match = team_info["league_id"] in [1, 2, 3, 4, 9, 39, 61, 78, 135, 140, 253]
+            allowed_markets = ["Match Winner", "Goals Over/Under", "Corners", "Both Teams Score", "Double Chance"]
+            filtered_odds = {}
+            has_value_bet = False
+            
+            for bet in bookmaker["bets"]:
+                if bet["name"] not in allowed_markets:
+                    continue
+                for v in bet["values"]:
+                    odd_val = float(v["odd"])
+                    val_name = str(v["value"])
+                    if "Under" in val_name and bet["name"] == "Goals Over/Under":
+                        continue
+                    filtered_odds[f"{bet['name']} - {val_name}"] = odd_val
+                    if 1.5 <= odd_val <= 3.0:
+                        has_value_bet = True
+            
+            if has_value_bet or is_top_match:
+                print(f"⏳ Analizando partido {fixture_id} ({team_info['home']} vs {team_info['away']})...")
+                payload = MatchDataPayload(
+                    fixture_id=fixture_id,
+                    match_date=scan_date,
+                    home_team=team_info["home"],
+                    away_team=team_info["away"],
+                    current_odds=filtered_odds,
+                    is_top_match=is_top_match,
+                    apex_velocity_data={"last_30_days": "Sample Data"},
+                    context_one_year_data={"current_season": "Sample Data"},
+                    h2h_historic_four_years=[]
+                )
+                
+                try:
+                    prediction = await gemini_service.analyze_match(payload)
+                    tier = "premium" if prediction.main_pick_confidence >= 75 else "free"
+                    
+                    db_record = {
+                        "fixture_id": fixture_id,
+                        "sport": "football",
+                        "league_name": team_info["league"],
+                        "event_name": f"{team_info['home']} vs {team_info['away']}",
+                        "event_date": f"{scan_date}T00:00:00Z",
+                        "stake": 1.0,
+                        "tier": tier,
+                        "is_top_match": is_top_match,
+                        "strategy": prediction.strategy,
+                        "apex_velocity_home": prediction.apex_velocity_home,
+                        "apex_velocity_away": prediction.apex_velocity_away,
+                        "selected_market": prediction.selected_market,
+                        "recommended_quota": prediction.recommended_quota,
+                        "main_pick_confidence": prediction.main_pick_confidence,
+                        "confidence_winner": prediction.confidence_winner,
+                        "confidence_over": prediction.confidence_over,
+                        "confidence_corners": prediction.confidence_corners,
+                        "confidence_btts": prediction.confidence_btts,
+                        "ai_justification": prediction.ai_justification,
+                        "status": "unconfirmed"
+                    }
+                    
+                    res = db.table("ai_predictions").insert(db_record).execute()
+                    oportunidades.append(res.data[0])
+                    existing_ids.add(fixture_id) # Para no volver a procesar si hay bugs
+                    print(f"⭐ Guardado [unconfirmed]: {prediction.selected_market} | Cuota: {prediction.recommended_quota}")
+                    await asyncio.sleep(8)
+                except Exception as e:
+                    print(f"❌ Error en {fixture_id}: {e}")
+
+    print(f"🎉 Terminado. Value Bets guardadas: {len(oportunidades)}")
     return {"status": "success", "processed_fixtures": len(oportunidades)}
+
+@router.post("/confirm-tips")
+async def confirm_pre_match_tips(db: Client = Depends(get_supabase_client)):
+    """
+    Busca partidos 'unconfirmed' que empiezan en la próxima hora.
+    Re-verifica las cuotas simulando confirmación directa por ahora.
+    Si la cuota bajó de 1.5 (para APEX), lo anula ('void').
+    De lo contrario, lo pasa a 'pending'.
+    """
+    try:
+        now = datetime.utcnow()
+        limit_time = now + timedelta(minutes=60) # Partidos en la próxima hora
+        
+        response = db.table("ai_predictions").select("*").eq("status", "unconfirmed").execute()
+        unconfirmed_matches = response.data
+        
+        confirmed_count = 0
+        voided_count = 0
+        
+        for match in unconfirmed_matches:
+            try:
+                event_date = datetime.strptime(match["event_date"][:19], "%Y-%m-%dT%H:%M:%S")
+            except:
+                continue
+                
+            if event_date <= limit_time:
+                # TODO: Implementar llamada real a API-Sports para cuota en vivo
+                # Lógica: Si es APEX y la cuota es muy baja (<1.5), void.
+                if not match["is_top_match"] and float(match["recommended_quota"]) < 1.50:
+                    db.table("ai_predictions").update({"status": "void"}).eq("id", match["id"]).execute()
+                    voided_count += 1
+                else:
+                    db.table("ai_predictions").update({"status": "pending"}).eq("id", match["id"]).execute()
+                    confirmed_count += 1
+                    
+        return {"status": "success", "confirmed": confirmed_count, "voided": voided_count}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
