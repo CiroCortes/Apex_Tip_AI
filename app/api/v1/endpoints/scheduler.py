@@ -60,10 +60,14 @@ async def scan_and_predict_pre_match(date: str = None, db: Client = Depends(get_
         for f in fixtures_data:
             team_names_map[str(f["fixture"]["id"])] = {
                 "home": f["teams"]["home"]["name"],
+                "home_logo": f["teams"]["home"]["logo"],
                 "away": f["teams"]["away"]["name"],
+                "away_logo": f["teams"]["away"]["logo"],
                 "league": f["league"]["name"],
                 "league_id": f["league"]["id"],
-                "status": f["fixture"]["status"]["short"]
+                "league_logo": f["league"]["logo"],
+                "status": f["fixture"]["status"]["short"],
+                "date": f["fixture"]["date"]
             }
 
         # 2. Traer cuotas
@@ -93,7 +97,12 @@ async def scan_and_predict_pre_match(date: str = None, db: Client = Depends(get_
                 continue
                 
             bookmaker = item["bookmakers"][0]
-            team_info = team_names_map.get(fixture_id, {"home": "Local", "away": "Visitante", "league": "Unknown", "league_id": 0, "status": "Unknown"})
+            team_info = team_names_map.get(fixture_id, {
+                "home": "Local", "home_logo": "", 
+                "away": "Visitante", "away_logo": "", 
+                "league": "Unknown", "league_id": 0, "league_logo": "", 
+                "status": "Unknown", "date": f"{scan_date}T00:00:00+00:00"
+            })
             
             # Solo predecir si NO han comenzado
             if team_info["status"] != "NS":
@@ -139,7 +148,7 @@ async def scan_and_predict_pre_match(date: str = None, db: Client = Depends(get_
                         "sport": "football",
                         "league_name": team_info["league"],
                         "event_name": f"{team_info['home']} vs {team_info['away']}",
-                        "event_date": f"{scan_date}T00:00:00Z",
+                        "event_date": team_info["date"],
                         "stake": 1.0,
                         "tier": tier,
                         "is_top_match": is_top_match,
@@ -154,7 +163,10 @@ async def scan_and_predict_pre_match(date: str = None, db: Client = Depends(get_
                         "confidence_corners": prediction.confidence_corners,
                         "confidence_btts": prediction.confidence_btts,
                         "ai_justification": prediction.ai_justification,
-                        "status": "unconfirmed"
+                        "status": "unconfirmed",
+                        "home_logo": team_info.get("home_logo", ""),
+                        "away_logo": team_info.get("away_logo", ""),
+                        "league_logo": team_info.get("league_logo", "")
                     }
                     
                     res = db.table("ai_predictions").insert(db_record).execute()

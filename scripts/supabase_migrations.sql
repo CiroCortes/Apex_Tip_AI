@@ -103,3 +103,8 @@ CREATE TABLE IF NOT EXISTS community_posts (
     likes_count INT DEFAULT 0,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
+
+-- 6. Actualización (Migración) para agregar URLs de Logos
+ALTER TABLE ai_predictions ADD COLUMN IF NOT EXISTS home_logo TEXT;
+ALTER TABLE ai_predictions ADD COLUMN IF NOT EXISTS away_logo TEXT;
+ALTER TABLE ai_predictions ADD COLUMN IF NOT EXISTS league_logo TEXT;

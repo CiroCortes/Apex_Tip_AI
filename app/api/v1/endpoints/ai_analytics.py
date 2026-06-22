@@ -9,9 +9,12 @@ from supabase import Client
 
 router = APIRouter()
 
+from datetime import datetime, timedelta
+
 @router.get("/predictions")
 async def get_ai_predictions(
     date: str,
+    tz_offset: int = 0, # Mantenemos el parámetro para no romper el cliente, pero lo ignoramos
     current_user: dict = Depends(get_current_user), 
     db: Client = Depends(get_supabase_client)
 ):
@@ -24,6 +27,7 @@ async def get_ai_predictions(
         
     try:
         # Filtramos por rango de fechas porque en la base de datos es un Timestamp
+        # La BD guarda todo a las 00:00:00Z, así que buscamos el día exacto
         start_date = f"{date}T00:00:00Z"
         end_date = f"{date}T23:59:59Z"
         
