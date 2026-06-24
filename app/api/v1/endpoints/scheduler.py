@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 import os
 import requests
 from datetime import datetime, timedelta
@@ -143,6 +143,15 @@ async def scan_and_predict_pre_match(date: str = None, db: Client = Depends(get_
                     prediction = await gemini_service.analyze_match(payload)
                     tier = "premium" if prediction.main_pick_confidence >= 75 else "free"
                     
+                    # Calcular el free_pick a partir de los porcentajes (Phase 15)
+                    highest_prob = max(prediction.prob_home, prediction.prob_draw, prediction.prob_away)
+                    if highest_prob == prediction.prob_home:
+                        free_pick = f"Gana {team_info['home']}"
+                    elif highest_prob == prediction.prob_away:
+                        free_pick = f"Gana {team_info['away']}"
+                    else:
+                        free_pick = "Empate"
+                        
                     db_record = {
                         "fixture_id": fixture_id,
                         "sport": "football",
@@ -166,7 +175,11 @@ async def scan_and_predict_pre_match(date: str = None, db: Client = Depends(get_
                         "status": "unconfirmed",
                         "home_logo": team_info.get("home_logo", ""),
                         "away_logo": team_info.get("away_logo", ""),
-                        "league_logo": team_info.get("league_logo", "")
+                        "league_logo": team_info.get("league_logo", ""),
+                        "prob_home": prediction.prob_home,
+                        "prob_draw": prediction.prob_draw,
+                        "prob_away": prediction.prob_away,
+                        "free_pick": free_pick
                     }
                     
                     res = db.table("ai_predictions").insert(db_record).execute()
@@ -217,3 +230,169 @@ async def confirm_pre_match_tips(db: Client = Depends(get_supabase_client)):
         return {"status": "success", "confirmed": confirmed_count, "voided": voided_count}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/backtest")
+async def run_backtest(days: int = 7, background_tasks: BackgroundTasks = BackgroundTasks(), db: Client = Depends(get_supabase_client)):
+    """
+    Máquina del Tiempo: Viaja al pasado, predice partidos terminados y los evalúa para llenar los gráficos.
+    Límite: 2 partidos por día.
+    """
+    from app.api.v1.endpoints.recap import run_daily_recap
+    
+    api_key = settings.API_FOOTBALL_KEY
+    headers = {
+        "x-rapidapi-key": api_key,
+        "x-rapidapi-host": "v3.football.api-sports.io"
+    }
+    
+    try:
+        existing = db.table("ai_predictions").select("fixture_id").execute()
+        existing_ids = {str(r["fixture_id"]) for r in existing.data}
+    except:
+        existing_ids = set()
+
+    oportunidades = []
+    today = datetime.utcnow()
+    # Retroceder desde days hasta 1 día antes
+    dates_to_scan = [(today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days, 0, -1)]
+    
+    for scan_date in dates_to_scan:
+        print(f"⏪ Backtesting fecha: {scan_date}...")
+        
+        fixtures_response = requests.get(SPORTS_API_URL_FIXTURES, headers=headers, params={"date": scan_date})
+        if fixtures_response.status_code != 200:
+            continue
+            
+        fixtures_data = fixtures_response.json().get("response", [])
+        if not fixtures_data:
+            continue
+            
+        team_names_map = {}
+        for f in fixtures_data:
+            team_names_map[str(f["fixture"]["id"])] = {
+                "home": f["teams"]["home"]["name"],
+                "home_logo": f["teams"]["home"]["logo"],
+                "away": f["teams"]["away"]["name"],
+                "away_logo": f["teams"]["away"]["logo"],
+                "league": f["league"]["name"],
+                "league_id": f["league"]["id"],
+                "league_logo": f["league"]["logo"],
+                "status": f["fixture"]["status"]["short"],
+                "date": f["fixture"]["date"]
+            }
+
+        # Traer cuotas para esa fecha
+        odds_response = requests.get(SPORTS_API_URL_ODDS, headers=headers, params={"date": scan_date, "bookmaker": "1", "page": 1})
+        if odds_response.status_code != 200:
+            continue
+        odds_data = odds_response.json().get("response", [])
+        
+        daily_matches_processed = 0
+        
+        for item in odds_data:
+            if daily_matches_processed >= 2:
+                break # Limite de seguridad
+                
+            fixture_id = str(item["fixture"]["id"])
+            if fixture_id in existing_ids:
+                continue
+                
+            if not item.get("bookmakers"):
+                continue
+                
+            bookmaker = item["bookmakers"][0]
+            team_info = team_names_map.get(fixture_id)
+            if not team_info:
+                continue
+                
+            # Solo partidos terminados
+            if team_info["status"] not in ["FT", "PEN", "AET"]:
+                continue
+                
+            is_top_match = team_info["league_id"] in [1, 2, 3, 4, 9, 39, 61, 78, 135, 140, 253]
+            allowed_markets = ["Match Winner", "Goals Over/Under", "Corners", "Both Teams Score", "Double Chance"]
+            filtered_odds = {}
+            has_value_bet = False
+            
+            for bet in bookmaker["bets"]:
+                if bet["name"] not in allowed_markets:
+                    continue
+                for v in bet["values"]:
+                    odd_val = float(v["odd"])
+                    val_name = str(v["value"])
+                    if "Under" in val_name and bet["name"] == "Goals Over/Under":
+                        continue
+                    filtered_odds[f"{bet['name']} - {val_name}"] = odd_val
+                    if 1.5 <= odd_val <= 3.0:
+                        has_value_bet = True
+            
+            if has_value_bet or is_top_match:
+                print(f"⏳ Analizando partido {fixture_id} ({team_info['home']} vs {team_info['away']})...")
+                payload = MatchDataPayload(
+                    fixture_id=fixture_id,
+                    match_date=scan_date,
+                    home_team=team_info["home"],
+                    away_team=team_info["away"],
+                    current_odds=filtered_odds,
+                    is_top_match=is_top_match,
+                    apex_velocity_data={"last_30_days": "Sample Data"},
+                    context_one_year_data={"current_season": "Sample Data"},
+                    h2h_historic_four_years=[]
+                )
+                
+                try:
+                    prediction = await gemini_service.analyze_match(payload)
+                    tier = "premium" if prediction.main_pick_confidence >= 75 else "free"
+                    
+                    highest_prob = max(prediction.prob_home, prediction.prob_draw, prediction.prob_away)
+                    if highest_prob == prediction.prob_home:
+                        free_pick = f"Gana {team_info['home']}"
+                    elif highest_prob == prediction.prob_away:
+                        free_pick = f"Gana {team_info['away']}"
+                    else:
+                        free_pick = "Empate"
+                        
+                    db_record = {
+                        "fixture_id": fixture_id,
+                        "sport": "football",
+                        "league_name": team_info["league"],
+                        "event_name": f"{team_info['home']} vs {team_info['away']}",
+                        "event_date": team_info["date"],
+                        "stake": 1.0,
+                        "tier": tier,
+                        "is_top_match": is_top_match,
+                        "strategy": prediction.strategy,
+                        "apex_velocity_home": prediction.apex_velocity_home,
+                        "apex_velocity_away": prediction.apex_velocity_away,
+                        "selected_market": prediction.selected_market,
+                        "recommended_quota": prediction.recommended_quota,
+                        "main_pick_confidence": prediction.main_pick_confidence,
+                        "confidence_winner": prediction.confidence_winner,
+                        "confidence_over": prediction.confidence_over,
+                        "confidence_corners": prediction.confidence_corners,
+                        "confidence_btts": prediction.confidence_btts,
+                        "ai_justification": f"[BACKTEST] {prediction.ai_justification}",
+                        "status": "pending",
+                        "home_logo": team_info.get("home_logo", ""),
+                        "away_logo": team_info.get("away_logo", ""),
+                        "league_logo": team_info.get("league_logo", ""),
+                        "prob_home": prediction.prob_home,
+                        "prob_draw": prediction.prob_draw,
+                        "prob_away": prediction.prob_away,
+                        "free_pick": free_pick
+                    }
+                    
+                    res = db.table("ai_predictions").insert(db_record).execute()
+                    oportunidades.append(res.data[0])
+                    existing_ids.add(fixture_id)
+                    daily_matches_processed += 1
+                    
+                    print(f"⭐ Guardado [pending] Backtest: {prediction.selected_market}")
+                    await asyncio.sleep(4)
+                except Exception as e:
+                    print(f"❌ Error en {fixture_id}: {e}")
+
+    print("🔄 Backtest finalizado. Evaluando partidos...")
+    await run_daily_recap(db)
+    
+    return {"status": "success", "backtest_matches_processed": len(oportunidades), "message": "Revisa los resultados."}

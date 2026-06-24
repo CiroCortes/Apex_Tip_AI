@@ -55,21 +55,28 @@ async def run_daily_recap(db: Client = Depends(get_supabase_client)):
             market = pred["selected_market"]
             is_won = False
             
-            if "Home Win" in market or "Match Winner - Home" in market:
+            if "Home" in market or "Local" in market and "Match Winner" in market:
                 is_won = goals_home > goals_away
-            elif "Away Win" in market or "Match Winner - Away" in market:
+            elif "Away" in market or "Visitante" in market and "Match Winner" in market:
                 is_won = goals_away > goals_home
-            elif "Draw" in market and "No Bet" not in market:
+            elif ("Draw" in market or "Empate" in market) and "No Bet" not in market:
                 is_won = goals_home == goals_away
-            elif "Draw No Bet" in market:
+            elif "Draw No Bet" in market or "Empate No Acción" in market:
                 if goals_home == goals_away:
                     is_won = None # Void
-                elif "Home" in market:
+                elif "Home" in market or "Local" in market:
                     is_won = goals_home > goals_away
                 else:
-                    is_won = goals_home > goals_away # Simplificación
-            elif "Over" in market and "Goals" in market:
-                # Ej: Over 2.5 Goals
+                    is_won = goals_away > goals_home
+            elif "Double Chance" in market or "Doble Oportunidad" in market:
+                if ("Home" in market or "Local" in market) and ("Away" in market or "Visitante" in market):
+                    is_won = goals_home != goals_away # 12
+                elif ("Home" in market or "Local" in market) and ("Draw" in market or "Empate" in market):
+                    is_won = goals_home >= goals_away # 1X
+                elif ("Away" in market or "Visitante" in market) and ("Draw" in market or "Empate" in market):
+                    is_won = goals_away >= goals_home # X2
+            elif ("Over" in market or "Más" in market) and ("Goals" in market or "Goles" in market):
+                # Ej: Over 2.5 Goals o Más de 2.5 Goles
                 try:
                     threshold_str = [word for word in market.split() if '.' in word or word.isdigit()][0]
                     threshold = float(threshold_str)
@@ -98,7 +105,9 @@ async def run_daily_recap(db: Client = Depends(get_supabase_client)):
             # 3. Actualizar la base de datos
             db.table("ai_predictions").update({
                 "status": final_status,
-                "pnl": pnl
+                "pnl": pnl,
+                "goals_home": goals_home,
+                "goals_away": goals_away
             }).eq("id", pred["id"]).execute()
             
             processed_count += 1

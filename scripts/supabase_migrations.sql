@@ -108,3 +108,15 @@ CREATE TABLE IF NOT EXISTS community_posts (
 ALTER TABLE ai_predictions ADD COLUMN IF NOT EXISTS home_logo TEXT;
 ALTER TABLE ai_predictions ADD COLUMN IF NOT EXISTS away_logo TEXT;
 ALTER TABLE ai_predictions ADD COLUMN IF NOT EXISTS league_logo TEXT;
+
+-- 7. Actualización (Migración) para almacenar el score final (Phase 12)
+ALTER TABLE ai_predictions ADD COLUMN IF NOT EXISTS goals_home INT DEFAULT NULL;
+ALTER TABLE ai_predictions ADD COLUMN IF NOT EXISTS goals_away INT DEFAULT NULL;
+
+-- 8. Actualización (Migración) para el Modelo Freemium 1X2 (Phase 13)
+ALTER TABLE ai_predictions ADD COLUMN IF NOT EXISTS prob_home INT DEFAULT 0;
+ALTER TABLE ai_predictions ADD COLUMN IF NOT EXISTS prob_draw INT DEFAULT 0;
+ALTER TABLE ai_predictions ADD COLUMN IF NOT EXISTS prob_away INT DEFAULT 0;
+
+-- 9. Actualización (Migración) para el Pick Gratuito en Texto (Phase 15)
+ALTER TABLE ai_predictions ADD COLUMN IF NOT EXISTS free_pick TEXT;
