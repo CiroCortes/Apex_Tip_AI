@@ -69,11 +69,18 @@ def get_ai_predictions(
         }
         
         for p in data:
-            st = p.get("status")
-            if st in summary:
-                summary[st] += 1
-            if p.get("pnl") is not None:
-                summary["total_units_profit"] += float(p["pnl"])
+            tier = p.get("tier", "free")
+            confidence = float(p.get("main_pick_confidence") or 0)
+            
+            # Ignorar del recap/estadísticas a los picks free malos (<70%)
+            is_bad_free = (tier == "free" and confidence < 70)
+            
+            if not is_bad_free:
+                st = p.get("status")
+                if st in summary:
+                    summary[st] += 1
+                if p.get("pnl") is not None:
+                    summary["total_units_profit"] += float(p["pnl"])
             
             # CENSURADOR FREEMIUM: Ocultar el tesoro a usuarios Free
             if not is_premium_user and p.get("tier") == "premium":
@@ -140,6 +147,11 @@ def get_ai_stats(days: int = 7, db: Client = Depends(get_supabase_client)):
             pnl = float(p.get("pnl") or 0.0)
             status = p.get("status")
             tier = p.get("tier", "premium")
+            confidence = float(p.get("main_pick_confidence") or 0)
+            
+            # Excluir del recap gráfico a los free picks de baja confianza
+            if tier == "free" and confidence < 70:
+                continue
             
             # Global
             global_map[day_str]["profit"] += pnl
