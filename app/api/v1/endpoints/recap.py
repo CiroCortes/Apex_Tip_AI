@@ -83,6 +83,12 @@ async def run_daily_recap(db: Client = Depends(get_supabase_client)):
                     is_won = (goals_home + goals_away) > threshold
                 except:
                     pass
+            elif "Both Teams to Score" in market or "Ambos" in market:
+                # Both Teams to Score - Yes
+                if "Yes" in market or "Sí" in market or "Si" in market:
+                    is_won = (goals_home > 0) and (goals_away > 0)
+                else: # No
+                    is_won = (goals_home == 0) or (goals_away == 0)
             elif "Corners" in market:
                  # API-Sports no siempre devuelve corners en fixtures si no tienes suscripción Pro,
                  # asumiendo PENDING manual o revisión en un nivel más avanzado.
@@ -108,6 +114,17 @@ async def run_daily_recap(db: Client = Depends(get_supabase_client)):
                 "pnl": pnl,
                 "goals_home": goals_home,
                 "goals_away": goals_away
+            }).eq("id", pred["id"]).execute()
+            
+            processed_count += 1
+            
+        elif status_short in ["PST", "CANC", "ABD", "AWD", "WO", "INT"]:
+            # Partidos pospuestos, cancelados o abandonados se marcan como void (anulados)
+            db.table("ai_predictions").update({
+                "status": "void",
+                "pnl": 0.0,
+                "goals_home": 0,
+                "goals_away": 0
             }).eq("id", pred["id"]).execute()
             
             processed_count += 1

@@ -141,7 +141,7 @@ async def scan_and_predict_pre_match(date: str = None, db: Client = Depends(get_
                 
                 try:
                     prediction = await gemini_service.analyze_match(payload)
-                    tier = "premium" if prediction.main_pick_confidence >= 75 else "free"
+                    tier = "premium" if prediction.main_pick_confidence >= 80 else "free"
                     
                     # Calcular el free_pick a partir de los porcentajes (Phase 15)
                     highest_prob = max(prediction.prob_home, prediction.prob_draw, prediction.prob_away)

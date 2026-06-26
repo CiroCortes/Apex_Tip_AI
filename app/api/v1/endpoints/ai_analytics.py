@@ -24,10 +24,18 @@ async def get_ai_predictions(
     # Verificamos si el usuario es premium
     is_premium_user = current_user.get("roles", {}).get("subscription") == "premium"
     try:
-        # Filtramos por rango de fechas porque en la base de datos es un Timestamp
-        # La BD guarda todo a las 00:00:00Z, así que buscamos el día exacto
-        start_date = f"{date}T00:00:00Z"
-        end_date = f"{date}T23:59:59Z"
+        # 1. Parseamos la fecha solicitada por el usuario en su zona local
+        local_date = datetime.strptime(date, "%Y-%m-%d")
+        
+        # 2. Calculamos los rangos en UTC.
+        # NOTA: Asumimos que tz_offset viene en minutos (ej. -240 para UTC-4).
+        # UTC = Local - offset. Si el frontend usa getTimezoneOffset() de JS (que envía 240 para UTC-4),
+        # puede que necesites cambiar la resta por una suma, pero este es el estándar.
+        utc_start_dt = local_date - timedelta(minutes=tz_offset)
+        utc_end_dt = utc_start_dt + timedelta(days=1) - timedelta(seconds=1)
+        
+        start_date = utc_start_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+        end_date = utc_end_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
         
         response = db.table("ai_predictions").select("*").gte("event_date", start_date).lte("event_date", end_date).execute()
         data = response.data
