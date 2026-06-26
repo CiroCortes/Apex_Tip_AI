@@ -11,8 +11,14 @@ router = APIRouter()
 
 from datetime import datetime, timedelta
 
+import time
+
+# Caché en memoria para evitar saturar Supabase con miles de usuarios concurrentes
+PREDICTIONS_CACHE = {}
+CACHE_TTL = 300  # 5 minutos
+
 @router.get("/predictions")
-async def get_ai_predictions(
+def get_ai_predictions(
     date: str,
     tz_offset: int = 0, # Mantenemos el parámetro para no romper el cliente, pero lo ignoramos
     current_user: dict = Depends(get_current_user), 
@@ -23,6 +29,16 @@ async def get_ai_predictions(
     """
     # Verificamos si el usuario es premium
     is_premium_user = current_user.get("roles", {}).get("subscription") == "premium"
+    
+    # 0. Verificamos la Caché antes de ir a Supabase
+    cache_key = f"{date}_{tz_offset}_{is_premium_user}"
+    current_time = time.time()
+    
+    if cache_key in PREDICTIONS_CACHE:
+        cached_data, timestamp = PREDICTIONS_CACHE[cache_key]
+        if current_time - timestamp < CACHE_TTL:
+            return cached_data
+
     try:
         # 1. Parseamos la fecha solicitada por el usuario en su zona local
         local_date = datetime.strptime(date, "%Y-%m-%d")
@@ -70,15 +86,20 @@ async def get_ai_predictions(
         # Redondear profit a 2 decimales
         summary["total_units_profit"] = round(summary["total_units_profit"], 2)
                 
-        return {
+        final_response = {
             "summary": summary,
             "predictions": data
         }
+        
+        # Guardamos en caché por 5 minutos
+        PREDICTIONS_CACHE[cache_key] = (final_response, current_time)
+        
+        return final_response
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/stats")
-async def get_ai_stats(days: int = 7, db: Client = Depends(get_supabase_client)):
+def get_ai_stats(days: int = 7, db: Client = Depends(get_supabase_client)):
     """
     Retorna el historial de profit agrupado por días y separado por tier (global, free, premium).
     Útil para dibujar gráficos de líneas en aplicaciones móviles.
