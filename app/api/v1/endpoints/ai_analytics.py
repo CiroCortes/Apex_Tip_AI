@@ -15,7 +15,9 @@ import time
 
 # Caché en memoria para evitar saturar Supabase con miles de usuarios concurrentes
 PREDICTIONS_CACHE = {}
+LIVE_PREDICTIONS_CACHE = {}
 CACHE_TTL = 300  # 5 minutos
+LIVE_CACHE_TTL = 30 # 30 segundos para en vivo
 
 @router.get("/predictions")
 def get_ai_predictions(
@@ -166,3 +168,42 @@ def get_ai_stats(days: int = 7, db: Client = Depends(get_supabase_client)):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/live-predictions")
+def get_live_predictions(
+    current_user: dict = Depends(get_current_user), 
+    db: Client = Depends(get_supabase_client)
+):
+    """
+    Retorna los picks en vivo generados por el bot In-Play xG.
+    """
+    is_premium_user = current_user.get("roles", {}).get("subscription") == "premium"
+    
+    # Caché rápida de 30 segundos
+    cache_key = f"live_{is_premium_user}"
+    current_time = time.time()
+    
+    if cache_key in LIVE_PREDICTIONS_CACHE:
+        cached_data, timestamp = LIVE_PREDICTIONS_CACHE[cache_key]
+        if current_time - timestamp < LIVE_CACHE_TTL:
+            return cached_data
+
+    try:
+        # Traer predicciones de las últimas 2 horas (para que no salgan picks de ayer)
+        time_threshold = (datetime.utcnow() - timedelta(hours=2)).isoformat()
+        
+        response = db.table("ai_live_predictions").select("*").gte("timestamp", time_threshold).execute()
+        data = response.data
+        
+        for p in data:
+            if not is_premium_user:
+                p["ai_justification"] = "LOCKED_PREMIUM"
+                p["recommended_quota"] = 0.0
+                
+        final_response = {"live_predictions": data}
+        LIVE_PREDICTIONS_CACHE[cache_key] = (final_response, current_time)
+        return final_response
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
