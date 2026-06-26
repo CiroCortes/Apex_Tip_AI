@@ -15,6 +15,7 @@ class LiveMatchPayload(BaseModel):
     dangerous_attacks_away: int = 0
     current_odds_over_05_fh: Optional[float] = None
     current_odds_over_15_match: Optional[float] = None
+    current_odds_over_05_match: Optional[float] = None
     is_top_match: bool = False
 
 class LiveAIPredictionResult(BaseModel):

@@ -41,8 +41,8 @@ async def scan_live_fixtures(background_tasks: BackgroundTasks, db: Client = Dep
         # Estrategia pura: Solo si van 0-0
         if goals_home == 0 and goals_away == 0:
             # Ventana A: Minuto 20 a 35 (Para Over 0.5 HT)
-            # Ventana B: Minuto 55 a 65 (Para Over 1.5 Match)
-            if (20 <= status_elapsed <= 35) or (55 <= status_elapsed <= 65):
+            # Ventana B: Minuto 55 a 85 (Para Over 1.5 Match / Over 0.5 Match)
+            if (20 <= status_elapsed <= 35) or (55 <= status_elapsed <= 85):
                 candidates.append(f)
                 
     if not candidates:
@@ -57,6 +57,11 @@ async def process_live_candidates(candidates: list, headers: dict, db: Client):
     for f in candidates:
         fixture_id = str(f["fixture"]["id"])
         status_elapsed = f["fixture"]["status"]["elapsed"]
+        
+        # 2.5 Evitar tips duplicados (solo 1 bet por partido en vivo)
+        check_resp = db.table("ai_live_predictions").select("id").eq("fixture_id", fixture_id).execute()
+        if check_resp.data:
+            continue
         
         # 3. Obtener estadísticas del partido
         stats_resp = requests.get(SPORTS_API_URL_STATS, headers=headers, params={"fixture": fixture_id})
@@ -91,6 +96,7 @@ async def process_live_candidates(candidates: list, headers: dict, db: Client):
         odds_resp = requests.get(SPORTS_API_URL_ODDS_LIVE, headers=headers, params={"fixture": fixture_id})
         current_odds_over_05_fh = None
         current_odds_over_15_match = None
+        current_odds_over_05_match = None
         
         if odds_resp.status_code == 200:
             odds_data = odds_resp.json().get("response", [])
@@ -104,6 +110,7 @@ async def process_live_candidates(candidates: list, headers: dict, db: Client):
                     elif market["id"] == 5: # Match Goals
                         for val in market["values"]:
                             if val["value"] == "Over 1.5": current_odds_over_15_match = float(val["odd"])
+                            if val["value"] == "Over 0.5": current_odds_over_05_match = float(val["odd"])
 
         # 5. Armar Payload para Gemini
         payload = LiveMatchPayload(
@@ -118,6 +125,7 @@ async def process_live_candidates(candidates: list, headers: dict, db: Client):
             corners_away=corners_away,
             current_odds_over_05_fh=current_odds_over_05_fh,
             current_odds_over_15_match=current_odds_over_15_match,
+            current_odds_over_05_match=current_odds_over_05_match,
             is_top_match=True # Por ahora tratamos a todos como top para que busque
         )
         

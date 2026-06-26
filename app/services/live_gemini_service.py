@@ -17,9 +17,10 @@ REGLAS ESTRICTAS DE APUESTAS EN VIVO:
    El partido DEBE mostrar gran presión ofensiva de alguno de los equipos (o combinada):
    - Al menos 3 Remates a Puerta (Shots on Target).
    - Al menos 4 Córners.
-3. ESTRATEGIAS PERMITIDAS:
-   - "ht_goals": Selecciona el mercado "Over 0.5 Goals First Half" si estamos en el primer tiempo (minuto 20-35) y la cuota actual es MAYOR o IGUAL a 1.68.
-   - "over_15_match": Selecciona el mercado "Over 1.5 Goals Match" si estamos en el segundo tiempo (minuto 55-65), las stats superan los requisitos, el partido sigue 0-0, y la cuota es MAYOR o IGUAL a 1.70.
+3. ESTRATEGIAS PERMITIDAS (SIEMPRE 0-0):
+   - "ht_goals": Selecciona "Over 0.5 Goals First Half" si estamos en el primer tiempo (minuto 20-35) y la cuota es >= 1.68.
+   - "over_15_match": Selecciona "Over 1.5 Goals Match" si estamos entre el minuto 55-69, las stats superan los requisitos, el partido sigue 0-0, y la cuota es >= 1.70.
+   - "over_05_match": Selecciona "Over 0.5 Goals Match" si estamos en un minuto muy avanzado (70-85), el partido sigue 0-0, y la cuota del Over 0.5 alcanza o supera 1.68. ¡Bajo ninguna circunstancia pidas Over 1.5 en el minuto 70+!
 4. CONFIDENCIA: Si las estadísticas doblan los requisitos (ej. 6 remates a puerta y 8 córners), la confianza debe ser mayor a 85%. Si están justas, 80%. Si no cumple los requisitos, rechaza el partido con confianza baja (menos de 70%).
 5. CUOTA RECOMENDADA: Usa estrictamente la cuota del mercado que elijas basándote en la información recibida.
 
@@ -46,6 +47,7 @@ DEBES devolver la respuesta EXCLUSIVAMENTE en formato JSON estructurado según e
         Cuotas Actuales Disponibles:
         - Over 0.5 Goals First Half: {payload.current_odds_over_05_fh}
         - Over 1.5 Goals Match: {payload.current_odds_over_15_match}
+        - Over 0.5 Goals Match: {payload.current_odds_over_05_match}
         
         Aplica la estrategia matemática de ApexTip AI y genera el pronóstico en vivo.
         """
