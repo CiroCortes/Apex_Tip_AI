@@ -129,6 +129,7 @@ async def process_live_candidates(candidates: list, headers: dict, db: Client):
             is_top_match=True # Por ahora tratamos a todos como top para que busque
         )
         
+        print(f"🤖 [LIVE] Enviando a Gemini: {payload.home_team} vs {payload.away_team} (Min: {payload.minute})")
         try:
             prediction = await live_gemini_service.analyze_live_match(payload)
             
@@ -146,7 +147,9 @@ async def process_live_candidates(candidates: list, headers: dict, db: Client):
                 }
                 # Insertar en tabla nueva
                 db.table("ai_live_predictions").insert(db_record).execute()
-                print(f"🔥 LIVE TIP GUARDADO: {db_record['event_name']} | {db_record['selected_market']} @ {db_record['recommended_quota']}")
+                print(f"🔥 [LIVE] TIP GUARDADO: {db_record['event_name']} | {db_record['selected_market']} @ {db_record['recommended_quota']} (Conf: {prediction.confidence}%)")
+            else:
+                print(f"❌ [LIVE] DESCARTADO por Gemini: {payload.home_team} vs {payload.away_team}. Confianza insuficiente ({prediction.confidence}%). Razón: {prediction.ai_justification}")
                 
             await asyncio.sleep(2) # Respetar rate limits
         except Exception as e:
